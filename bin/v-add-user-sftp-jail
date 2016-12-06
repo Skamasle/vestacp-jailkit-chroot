@@ -1,0 +1,113 @@
+#!/bin/bash
+# info: add user sftp jail
+# options: USER
+#
+# The script enables sftp jailed environment
+#
+# Original script by VestaCP <vestacp.com>, modified by Estilate <info@estilate.com>, November 2016
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+user=$1
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/conf/vesta.conf
+
+# Detecting user shell
+ssh_sftp=$(grep "^$user:" /etc/passwd |egrep "bash")
+
+# Defining user homedir
+home=$(grep "^$user:" /etc/passwd | cut -f6 -d:)
+
+# Defining chroot directory
+chroot="/chroot/$user"
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'USER'
+is_format_valid 'user'
+
+if [ -z "$SFTPJAIL_KEY" ]; then
+    exit
+fi
+
+# Checking if jailkit is installed
+if [ ! -x /sbin/jk_init ] ; then
+    echo "Error: Jailkit isn't installed"
+    exit
+fi
+
+# Skipping backup user
+if [ $user == 'backup' ]; then
+	exit
+fi
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+# Adding chroot directory
+if [ ! -d "$chroot/$home" ]; then
+    mkdir -p $chroot/$home
+    chown -R root:root $chroot
+    chown $user:$user $chroot/$home
+
+    # Getting user selected shell: if it's bash the jailkit script will be executed, otherwise it will continue
+    if [ ! -z "$ssh_sftp" ]; then
+        # Installing shell files into the user chroot directory 
+        # - IMPORTANT - MODIFY THE FOLLOWING LINES AND THE FILE jk_init.ini ACCORDING TO YOUR SYSTEM AND YOUR PREFERENCES
+        /sbin/jk_init -f -j $chroot basicshell editors extendedshell netutils ssh sftp scp git
+        /sbin/jk_cp -f -j $chroot /bin/id
+
+        # Jailing user
+        /sbin/jk_jailuser -s /bin/bash -j $chroot $user
+
+        # Creating the tmp directory 
+        mkdir -p $chroot/tmp
+        chown $user:$user $chroot/tmp
+
+        # Set home directory and shell again for being sure it's using the correct one...
+        usermod -d /home/$user $user
+        usermod -s /bin/bash $user
+
+        # Adding the user to the chroot /etc/passwd if it wasn't added yet
+        if [ -z "$(grep "^$user:" $chroot/etc/passwd |egrep "bash")" ]; then
+            echo $(grep "^$user:" /etc/passwd |egrep "bash") >> $chroot/etc/passwd
+        fi
+
+        # Adding the user to the chroot /etc/group if it wasn't added yet
+        if [ -z "$(grep "^$user:" $chroot/etc/group)" ]; then
+            echo $(grep "^$user:" /etc/group) >> $chroot/etc/group
+        fi
+
+        # Uncomment and modify the following line if you want to add a custom PS1
+        #echo 'PS1="\u@\h [\t]> "' >> /home/$user/.bash_profile 
+    fi
+fi
+
+# Getting user selected shell: if it's bash add user to sftp and ssh group, otherwise add user to sftp only group
+if [ -z "$ssh_sftp" ]; then
+    usermod -a -G sftp-only $user
+else
+	usermod -a -G sftp-ssh $user
+fi
+
+# Mouting user home directory
+if [ -z "$(mount |grep $chroot/home/$user)" ]; then
+    mount -o bind /home/$user $chroot/home/$user
+fi
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+log_event "$OK" "$ARGUMENTS"
+
+exit

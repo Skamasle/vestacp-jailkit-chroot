@@ -54,7 +54,6 @@ Take in mind that I'm using Centos 7, your installation process may differ a lit
     
     Install jailkit
     ```bash
-    cd /tmp
     ./configure
     make
     make install
